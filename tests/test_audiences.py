@@ -159,6 +159,22 @@ class TestCreateCustomAudience:
         nested = json.loads(result_data["data"])
         assert "error" in nested
 
+    @pytest.mark.asyncio
+    async def test_ig_business_subtype_rejected(self):
+        """Test that IG_BUSINESS subtype is rejected (removed in v25.0)."""
+        result = await create_custom_audience(
+            account_id="act_123",
+            name="My IG Audience",
+            subtype="IG_BUSINESS",
+            access_token="test_token",
+        )
+
+        result_data = json.loads(result)
+        assert "data" in result_data
+        nested = json.loads(result_data["data"])
+        assert "error" in nested
+        assert "v25.0" in nested["error"] or "IG_BUSINESS" in nested["error"]
+
 
 class TestCreateLookalikeAudience:
     """Test cases for create_lookalike_audience function."""

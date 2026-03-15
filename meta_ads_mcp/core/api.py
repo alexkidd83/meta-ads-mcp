@@ -239,22 +239,11 @@ async def make_api_request(
                 logger.warning(f"Detected authentication error ({e.response.status_code})")
                 auth_manager.invalidate_token()
             
-            # Include full details for technical users
-            full_response = {
-                "headers": dict(e.response.headers),
-                "status_code": e.response.status_code,
-                "url": str(e.response.url),
-                "reason": getattr(e.response, "reason_phrase", "Unknown reason"),
-                "request_method": e.request.method,
-                "request_url": str(e.request.url)
-            }
-            
             # Return a properly structured error object
             return {
                 "error": {
                     "message": f"HTTP Error: {e.response.status_code}",
                     "details": error_info,
-                    "full_response": full_response
                 }
             }
         

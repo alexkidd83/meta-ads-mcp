@@ -186,7 +186,7 @@ async def make_api_request(
 
             # Ensure the response is JSON and return it as a dictionary
             try:
-                return response.json()
+                return _strip_paging_urls(response.json())
             except json.JSONDecodeError:
                 # If not JSON, return text content in a structured format
                 return {
@@ -250,6 +250,19 @@ async def make_api_request(
         except Exception as e:
             logger.error(f"Request Error: {str(e)}")
             return {"error": {"message": str(e)}}
+
+
+def _strip_paging_urls(data: dict) -> dict:
+    """Remove paging.next/previous full URLs; keep paging.cursors.
+
+    paging.next and paging.previous embed the full access token as a query
+    parameter. Stripping them reduces token waste (~180 tokens per paginated
+    call) without losing pagination capability — cursors are preserved.
+    """
+    if isinstance(data, dict) and "paging" in data:
+        paging = data["paging"]
+        data["paging"] = {k: v for k, v in paging.items() if k not in ("next", "previous")}
+    return data
 
 
 # Generic wrapper for all Meta API tools

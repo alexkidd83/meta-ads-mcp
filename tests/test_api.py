@@ -67,8 +67,8 @@ class TestPagingUrlStripping:
                     "before": "cursor_before_abc",
                     "after": "cursor_after_xyz",
                 },
-                "next": "https://graph.facebook.com/v25.0/insights?access_token=EAAabc123secret&after=cursor_after_xyz",
-                "previous": "https://graph.facebook.com/v25.0/insights?access_token=EAAabc123secret&before=cursor_before_abc",
+                "next": "https://graph.facebook.com/v25.0/insights?access_token=EAAtoken&after=cursor_after_xyz",
+                "previous": "https://graph.facebook.com/v25.0/insights?access_token=EAAtoken&before=cursor_before_abc",
             },
         }
 
@@ -126,3 +126,31 @@ class TestInsightsMetadataStripping:
         assert "id" not in item, "id is a noisy path string — must be stripped"
         assert "name" in item, "name must be preserved (identifies the metric)"
         assert "values" in item, "values must be preserved (the actual data)"
+
+
+class TestInsightsMetadataDiscriminator:
+    @pytest.mark.asyncio
+    async def test_campaign_list_id_not_stripped(self):
+        """_strip_insights_metadata must not fire on campaign/adset/ad list shapes."""
+        from meta_ads_mcp.core.api import make_api_request
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.headers = {}
+        mock_response.raise_for_status.return_value = None
+        mock_response.json.return_value = {
+            "data": [
+                {"id": "123456789", "name": "Campaign A", "status": "ACTIVE"},
+                {"id": "987654321", "name": "Campaign B", "status": "PAUSED"},
+            ]
+        }
+
+        with patch("httpx.AsyncClient") as mock_client_cls:
+            mock_client = AsyncMock()
+            mock_client_cls.return_value.__aenter__.return_value = mock_client
+            mock_client.get.return_value = mock_response
+
+            result = await make_api_request("act_123/campaigns", "test_token")
+
+        assert result["data"][0]["id"] == "123456789", "id must not be stripped from list responses"
+        assert result["data"][1]["id"] == "987654321", "id must not be stripped from list responses"

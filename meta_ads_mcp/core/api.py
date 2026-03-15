@@ -258,6 +258,8 @@ def _strip_paging_urls(data: dict) -> dict:
     paging.next and paging.previous embed the full access token as a query
     parameter. Stripping them reduces token waste (~180 tokens per paginated
     call) without losing pagination capability — cursors are preserved.
+
+    Mutates data in-place and returns it.
     """
     if isinstance(data, dict) and "paging" in data:
         paging = data["paging"]
@@ -275,6 +277,8 @@ def _strip_insights_metadata(data: dict) -> dict:
     Only strips from items that have both 'name' and 'values' keys —
     the shape unique to Graph API insights items — to avoid removing the
     'id' field from campaign/adset/ad list responses.
+
+    Mutates data in-place and returns it.
     """
     if isinstance(data, dict) and "data" in data and isinstance(data["data"], list):
         for item in data["data"]:

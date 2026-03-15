@@ -271,13 +271,17 @@ def _strip_insights_metadata(data: dict) -> dict:
     Insights responses include per-metric title, description, and id path
     strings that are never used by the operator. Stripping them reduces
     token waste (~115 tokens per insights call).
+
+    Only strips from items that have both 'name' and 'values' keys —
+    the shape unique to Graph API insights items — to avoid removing the
+    'id' field from campaign/adset/ad list responses.
     """
-    _STRIP_KEYS = frozenset({"title", "description", "id"})
     if isinstance(data, dict) and "data" in data and isinstance(data["data"], list):
         for item in data["data"]:
-            if isinstance(item, dict):
-                for key in _STRIP_KEYS:
-                    item.pop(key, None)
+            if isinstance(item, dict) and "values" in item and "name" in item:
+                item.pop("title", None)
+                item.pop("description", None)
+                item.pop("id", None)
     return data
 
 

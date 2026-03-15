@@ -186,7 +186,7 @@ async def make_api_request(
 
             # Ensure the response is JSON and return it as a dictionary
             try:
-                return _strip_paging_urls(response.json())
+                return _strip_insights_metadata(_strip_paging_urls(response.json()))
             except json.JSONDecodeError:
                 # If not JSON, return text content in a structured format
                 return {
@@ -262,6 +262,22 @@ def _strip_paging_urls(data: dict) -> dict:
     if isinstance(data, dict) and "paging" in data:
         paging = data["paging"]
         data["paging"] = {k: v for k, v in paging.items() if k not in ("next", "previous")}
+    return data
+
+
+def _strip_insights_metadata(data: dict) -> dict:
+    """Remove verbose metadata fields from insights data items.
+
+    Insights responses include per-metric title, description, and id path
+    strings that are never used by the operator. Stripping them reduces
+    token waste (~115 tokens per insights call).
+    """
+    _STRIP_KEYS = frozenset({"title", "description", "id"})
+    if isinstance(data, dict) and "data" in data and isinstance(data["data"], list):
+        for item in data["data"]:
+            if isinstance(item, dict):
+                for key in _STRIP_KEYS:
+                    item.pop(key, None)
     return data
 
 

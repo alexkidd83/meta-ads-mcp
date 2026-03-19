@@ -54,7 +54,9 @@ FEED_DEFAULT_METRICS = [
     "likes", "comments", "follows", "profile_visits", "reposts",
 ]
 
-REELS_DEFAULT_METRICS = FEED_DEFAULT_METRICS + [
+REELS_DEFAULT_METRICS = [
+    "reach", "saved", "shares", "views", "total_interactions",
+    "likes", "comments", "reposts",
     "reels_skip_rate", "ig_reels_avg_watch_time", "ig_reels_video_view_total_time",
 ]
 
@@ -76,7 +78,8 @@ async def get_media_insights(
     Supported metrics by media type (Graph API v25.0+):
         IMAGE/VIDEO/CAROUSEL (FEED): reach, saved, shares, views, total_interactions,
                                       likes, comments, follows, profile_visits, reposts
-        REELS:                       (all FEED metrics) + reels_skip_rate,
+        REELS:                       reach, saved, shares, views, total_interactions,
+                                      likes, comments, reposts, reels_skip_rate,
                                       ig_reels_avg_watch_time, ig_reels_video_view_total_time
         STORIES:                     reach, replies, taps_forward, taps_back, exits,
                                       follows, profile_visits

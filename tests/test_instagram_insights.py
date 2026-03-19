@@ -178,6 +178,22 @@ class TestGetMediaInsights:
             assert params["metric"] == ",".join(STORY_DEFAULT_METRICS)
 
     @pytest.mark.asyncio
+    async def test_defaults_for_reels_exclude_unsupported_metrics(self):
+        """REELS defaults should not include follows/profile_visits (400 on v25.0)."""
+        type_response = {"media_product_type": "REELS"}
+        insights_response = {"data": []}
+        with patch(
+            "meta_ads_mcp.core.instagram_insights.make_api_request",
+            new_callable=AsyncMock,
+            side_effect=[type_response, insights_response],
+        ) as mock_api:
+            await get_media_insights(media_id="999", access_token="test_token")
+            params = mock_api.call_args_list[1][0][2]
+            metrics = params["metric"].split(",")
+            assert "follows" not in metrics
+            assert "profile_visits" not in metrics
+
+    @pytest.mark.asyncio
     async def test_custom_metrics_skip_detection(self):
         """When explicit metrics are passed, no media-type lookup is made."""
         insights_response = {"data": []}

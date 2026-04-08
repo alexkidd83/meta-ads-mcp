@@ -493,6 +493,16 @@ For advanced users who need to self-host, the package can be installed from sour
     - Note: 50 posts/day rate limit applies. Media URL must be publicly accessible.
     - Returns: Published media ID on success
 
+35. `mcp_meta_ads_get_ig_profile`
+    - Get real-time profile data for an Instagram Business Account (no processing lag)
+    - Queries the IG User node directly (`/{ig_user_id}?fields=...`) rather than the `/insights` edge, so data is live with zero lag — unlike `get_ig_account_insights` which has a 2-3 day delay
+    - Inputs:
+      - `ig_user_id`: Numeric Instagram Business Account ID (digits only, not `act_`-prefixed)
+      - `fields`: Optional list of field names (lowercase letters and underscores only). Defaults to `["followers_count", "follows_count", "media_count", "name", "biography", "website", "profile_picture_url", "ig_id", "username"]`
+      - `access_token` (optional): Meta API access token
+    - Note: `profile_picture_url` is a temporary CDN URL that expires within hours.
+    - Returns: JSON object with the requested profile fields
+
 35. `mcp_meta_ads_get_custom_audiences`
     - Get custom audiences for a Meta Ads account
     - Inputs:

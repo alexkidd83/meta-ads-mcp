@@ -1,6 +1,7 @@
 """Instagram Insights and publishing functionality for Meta Graph API."""
 
 import json
+import re
 from typing import Optional, List
 from .api import meta_api_tool, make_api_request
 from .server import mcp_server
@@ -307,3 +308,70 @@ async def publish_media(
         )
 
     return json.dumps(step2_data, indent=2)
+
+
+IG_PROFILE_DEFAULT_FIELDS = [
+    "followers_count",
+    "follows_count",
+    "media_count",
+    "name",
+    "biography",
+    "website",
+    "profile_picture_url",
+    "ig_id",
+    "username",
+]
+
+
+@mcp_server.tool()
+@meta_api_tool
+async def get_ig_profile(
+    ig_user_id: str,
+    access_token: Optional[str] = None,
+    fields: Optional[List[str]] = None,
+) -> str:
+    """Get real-time profile data for an Instagram Business Account.
+
+    Queries the IG User node directly (/{ig_user_id}?fields=...) rather than
+    the /insights edge. This returns live data with no processing lag — unlike
+    get_ig_account_insights which has a 2-3 day lag for metrics like follower_count.
+
+    Default fields returned (when fields is None):
+        followers_count, follows_count, media_count, name, biography, website,
+        profile_picture_url, ig_id, username
+
+    Note: profile_picture_url is a temporary CDN URL that expires within hours.
+    Note: ig_user_id must be the numeric IG Business Account ID, NOT an ad account
+    ID starting with 'act_'.
+
+    Args:
+        ig_user_id: Numeric Instagram Business Account ID (digits only).
+        access_token: Meta API access token.
+        fields: List of field names to retrieve. Each must be lowercase letters
+                and underscores only. Defaults to IG_PROFILE_DEFAULT_FIELDS.
+
+    Returns:
+        JSON string with profile data from the IG User node.
+    """
+    if not ig_user_id:
+        return json.dumps({"error": "ig_user_id is required"}, indent=2)
+
+    if not re.fullmatch(r'\d+', ig_user_id):
+        return json.dumps(
+            {"error": "ig_user_id must be a numeric string (digits only) — no slashes, spaces, or letters"},
+            indent=2,
+        )
+
+    if fields is not None:
+        if not fields:
+            return json.dumps({"error": "fields must be a non-empty list when provided"}, indent=2)
+        for f in fields:
+            if not re.fullmatch(r'[a-z_]+', f):
+                return json.dumps(
+                    {"error": f"Invalid field name '{f}': field names must contain only lowercase letters and underscores"},
+                    indent=2,
+                )
+
+    fields_to_use = fields if fields is not None else IG_PROFILE_DEFAULT_FIELDS
+    data = await make_api_request(ig_user_id, access_token, {"fields": ",".join(fields_to_use)})
+    return json.dumps(data, indent=2)

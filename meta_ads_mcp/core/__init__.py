@@ -13,7 +13,7 @@ from . import ads_library  # Import module to register conditional tools
 from .budget_schedules import create_budget_schedule
 from .targeting import search_interests, get_interest_suggestions, estimate_audience_size, search_behaviors, search_demographics, search_geo_locations
 from .audiences import get_custom_audiences, create_custom_audience, create_lookalike_audience
-from .instagram_insights import list_media, get_media_insights, get_ig_account_insights, get_story_insights, publish_media
+from .instagram_insights import list_media, get_media_insights, get_ig_account_insights, get_story_insights, publish_media, get_ig_profile
 from . import reports  # Import module to register conditional tools
 from . import duplication  # Import module to register conditional duplication tools
 from .openai_deep_research import search, fetch  # OpenAI MCP Deep Research tools
@@ -54,6 +54,7 @@ __all__ = [
     'get_ig_account_insights',
     'get_story_insights',
     'publish_media',
+    'get_ig_profile',
     'search',  # OpenAI MCP Deep Research search tool
     'fetch',   # OpenAI MCP Deep Research fetch tool
 ]

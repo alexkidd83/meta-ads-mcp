@@ -10,9 +10,11 @@ from meta_ads_mcp.core.instagram_insights import (
     get_ig_account_insights,
     get_story_insights,
     publish_media,
+    get_ig_profile,
     FEED_DEFAULT_METRICS,
     REELS_DEFAULT_METRICS,
     STORY_DEFAULT_METRICS,
+    IG_PROFILE_DEFAULT_FIELDS,
 )
 
 
@@ -455,3 +457,141 @@ class TestPublishMedia:
             # creation_id must be present so the caller can debug
             assert "creation_id" in result_data
             assert result_data["creation_id"] == "container_123"
+
+
+class TestGetIgProfile:
+    MOCK_PROFILE = {
+        "followers_count": 7300,
+        "follows_count": 150,
+        "media_count": 42,
+        "name": "CultMeUp",
+        "biography": "Greece's first workshop marketplace.",
+        "website": "https://cultmeup.gr",
+        "profile_picture_url": "https://cdn.example.com/pic.jpg",
+        "ig_id": "17841473732194608",
+        "username": "cultmeup",
+        "id": "17841473732194608",
+    }
+
+    @pytest.mark.asyncio
+    async def test_success_default_fields(self):
+        """All 9 default fields are sent and the response is returned correctly."""
+        with patch(
+            "meta_ads_mcp.core.instagram_insights.make_api_request",
+            new_callable=AsyncMock,
+            return_value=self.MOCK_PROFILE,
+        ) as mock_api:
+            result = await get_ig_profile(ig_user_id="17841473732194608", access_token="test_token")
+            mock_api.assert_called_once_with(
+                "17841473732194608",
+                "test_token",
+                {"fields": ",".join(IG_PROFILE_DEFAULT_FIELDS)},
+            )
+            result_data = json.loads(result)
+            assert result_data["followers_count"] == 7300
+            assert result_data["username"] == "cultmeup"
+
+    @pytest.mark.asyncio
+    async def test_custom_fields_override(self):
+        """Only caller-specified fields are sent to the API."""
+        custom_fields = ["followers_count", "username"]
+        mock_response = {"followers_count": 7300, "username": "cultmeup", "id": "17841473732194608"}
+        with patch(
+            "meta_ads_mcp.core.instagram_insights.make_api_request",
+            new_callable=AsyncMock,
+            return_value=mock_response,
+        ) as mock_api:
+            result = await get_ig_profile(
+                ig_user_id="17841473732194608",
+                access_token="test_token",
+                fields=custom_fields,
+            )
+            call_args = mock_api.call_args
+            params = call_args[0][2]
+            assert params["fields"] == "followers_count,username"
+            result_data = json.loads(result)
+            assert result_data["followers_count"] == 7300
+
+    @pytest.mark.asyncio
+    async def test_no_ig_user_id(self):
+        """Empty ig_user_id returns an error (double-parse pattern)."""
+        result = await get_ig_profile(ig_user_id="", access_token="test_token")
+        result_data = json.loads(result)
+        assert "data" in result_data
+        nested = json.loads(result_data["data"])
+        assert "error" in nested
+
+    @pytest.mark.asyncio
+    async def test_default_fields_constant(self):
+        """IG_PROFILE_DEFAULT_FIELDS has exactly 9 items with the expected names."""
+        assert len(IG_PROFILE_DEFAULT_FIELDS) == 9
+        expected = {
+            "followers_count", "follows_count", "media_count", "name",
+            "biography", "website", "profile_picture_url", "ig_id", "username",
+        }
+        assert set(IG_PROFILE_DEFAULT_FIELDS) == expected
+
+    @pytest.mark.asyncio
+    async def test_endpoint_is_bare_node(self):
+        """The endpoint passed to make_api_request is the bare ig_user_id, not ig_user_id/insights."""
+        with patch(
+            "meta_ads_mcp.core.instagram_insights.make_api_request",
+            new_callable=AsyncMock,
+            return_value=self.MOCK_PROFILE,
+        ) as mock_api:
+            await get_ig_profile(ig_user_id="17841473732194608", access_token="test_token")
+            endpoint_arg = mock_api.call_args[0][0]
+            assert endpoint_arg == "17841473732194608"
+            assert "insights" not in endpoint_arg
+
+    @pytest.mark.asyncio
+    async def test_slash_in_ig_user_id(self):
+        """ig_user_id containing a slash is rejected with an error."""
+        result = await get_ig_profile(ig_user_id="12345/insights", access_token="test_token")
+        result_data = json.loads(result)
+        assert "data" in result_data
+        nested = json.loads(result_data["data"])
+        assert "error" in nested
+
+    @pytest.mark.asyncio
+    async def test_empty_fields_list(self):
+        """fields=[] is rejected with an error."""
+        result = await get_ig_profile(ig_user_id="17841473732194608", access_token="test_token", fields=[])
+        result_data = json.loads(result)
+        assert "data" in result_data
+        nested = json.loads(result_data["data"])
+        assert "error" in nested
+
+    @pytest.mark.asyncio
+    async def test_invalid_field_name(self):
+        """A field containing special chars (e.g. semicolon) is rejected with an error."""
+        result = await get_ig_profile(
+            ig_user_id="17841473732194608",
+            access_token="test_token",
+            fields=["followers_count", "bad;field"],
+        )
+        result_data = json.loads(result)
+        assert "data" in result_data
+        nested = json.loads(result_data["data"])
+        assert "error" in nested
+
+    @pytest.mark.asyncio
+    async def test_api_error_propagation(self):
+        """Graph API error dict is returned when the upstream call fails.
+
+        The meta_api_tool wrapper intercepts error responses and double-wraps them
+        in {"data": "<json-string>"}. We unpack that to confirm the error propagates.
+        """
+        error_response = {"error": {"message": "Invalid OAuth access token.", "code": 190}}
+        with patch(
+            "meta_ads_mcp.core.instagram_insights.make_api_request",
+            new_callable=AsyncMock,
+            return_value=error_response,
+        ):
+            result = await get_ig_profile(ig_user_id="17841473732194608", access_token="bad_token")
+            result_data = json.loads(result)
+            # meta_api_tool wraps the error in {"data": "<json>"}
+            assert "data" in result_data
+            nested = json.loads(result_data["data"])
+            assert "error" in nested
+            assert nested["error"]["code"] == 190

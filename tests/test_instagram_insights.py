@@ -1,0 +1,597 @@
+"""Tests for instagram_insights module."""
+
+import pytest
+import json
+from unittest.mock import AsyncMock, patch, call
+
+from meta_ads_mcp.core.instagram_insights import (
+    list_media,
+    get_media_insights,
+    get_ig_account_insights,
+    get_story_insights,
+    publish_media,
+    get_ig_profile,
+    FEED_DEFAULT_METRICS,
+    REELS_DEFAULT_METRICS,
+    STORY_DEFAULT_METRICS,
+    IG_PROFILE_DEFAULT_FIELDS,
+)
+
+
+class TestListMedia:
+    EXPECTED_FIELDS = "id,media_type,media_product_type,timestamp,permalink,caption,like_count,comments_count"
+
+    @pytest.mark.asyncio
+    async def test_success(self):
+        mock_response = {"data": [{"id": "123", "media_type": "REELS", "like_count": 50}]}
+        with patch(
+            "meta_ads_mcp.core.instagram_insights.make_api_request",
+            new_callable=AsyncMock,
+            return_value=mock_response,
+        ) as mock_api:
+            result = await list_media(ig_user_id="17841400000", access_token="test_token")
+            mock_api.assert_called_once_with(
+                "17841400000/media",
+                "test_token",
+                {
+                    "fields": self.EXPECTED_FIELDS,
+                    "limit": 20,
+                },
+            )
+            result_data = json.loads(result)
+            assert result_data["data"][0]["id"] == "123"
+
+    @pytest.mark.asyncio
+    async def test_since_until_params(self):
+        mock_response = {"data": []}
+        with patch(
+            "meta_ads_mcp.core.instagram_insights.make_api_request",
+            new_callable=AsyncMock,
+            return_value=mock_response,
+        ) as mock_api:
+            await list_media(
+                ig_user_id="17841400000",
+                access_token="test_token",
+                since="2025-11-15",
+                until="2026-03-14",
+            )
+            call_args = mock_api.call_args
+            params = call_args[0][2]
+            assert params["since"] == "2025-11-15"
+            assert params["until"] == "2026-03-14"
+
+    @pytest.mark.asyncio
+    async def test_since_without_until(self):
+        mock_response = {"data": []}
+        with patch(
+            "meta_ads_mcp.core.instagram_insights.make_api_request",
+            new_callable=AsyncMock,
+            return_value=mock_response,
+        ) as mock_api:
+            await list_media(
+                ig_user_id="17841400000",
+                access_token="test_token",
+                since="2025-11-15",
+            )
+            call_args = mock_api.call_args
+            params = call_args[0][2]
+            assert params["since"] == "2025-11-15"
+            assert "until" not in params
+
+    @pytest.mark.asyncio
+    async def test_fields_include_media_product_type(self):
+        mock_response = {"data": []}
+        with patch(
+            "meta_ads_mcp.core.instagram_insights.make_api_request",
+            new_callable=AsyncMock,
+            return_value=mock_response,
+        ) as mock_api:
+            await list_media(ig_user_id="17841400000", access_token="test_token")
+            call_args = mock_api.call_args
+            params = call_args[0][2]
+            assert "media_product_type" in params["fields"]
+
+    @pytest.mark.asyncio
+    async def test_fields_do_not_include_video_views(self):
+        """video_views was removed — Graph API v25.0 never returns it for Reels."""
+        mock_response = {"data": []}
+        with patch(
+            "meta_ads_mcp.core.instagram_insights.make_api_request",
+            new_callable=AsyncMock,
+            return_value=mock_response,
+        ) as mock_api:
+            await list_media(ig_user_id="17841400000", access_token="test_token")
+            call_args = mock_api.call_args
+            params = call_args[0][2]
+            assert "video_views" not in params["fields"]
+
+    @pytest.mark.asyncio
+    async def test_no_ig_user_id(self):
+        result = await list_media(ig_user_id="", access_token="test_token")
+        result_data = json.loads(result)
+        assert "data" in result_data
+        nested = json.loads(result_data["data"])
+        assert "error" in nested
+
+    @pytest.mark.asyncio
+    async def test_fields_do_not_include_thumbnail_url(self):
+        """thumbnail_url is a CDN URL ~100 chars — wastes tokens, not used by operator."""
+        mock_response = {"data": []}
+        with patch(
+            "meta_ads_mcp.core.instagram_insights.make_api_request",
+            new_callable=AsyncMock,
+            return_value=mock_response,
+        ) as mock_api:
+            await list_media(ig_user_id="17841400000", access_token="test_token")
+            call_args = mock_api.call_args
+            params = call_args[0][2]
+            assert "thumbnail_url" not in params["fields"]
+
+
+class TestGetMediaInsights:
+    @pytest.mark.asyncio
+    async def test_success_with_defaults_reels(self):
+        """Default metrics for REELS media include Reels-specific metrics."""
+        type_response = {"media_product_type": "REELS"}
+        insights_response = {"data": [{"name": "reach", "values": [{"value": 500}]}]}
+        with patch(
+            "meta_ads_mcp.core.instagram_insights.make_api_request",
+            new_callable=AsyncMock,
+            side_effect=[type_response, insights_response],
+        ) as mock_api:
+            result = await get_media_insights(media_id="123", access_token="test_token")
+            # First call: type detection
+            assert mock_api.call_args_list[0] == call(
+                "123", "test_token", {"fields": "media_product_type"}
+            )
+            # Second call: insights with Reels defaults
+            params = mock_api.call_args_list[1][0][2]
+            assert params["metric"] == ",".join(REELS_DEFAULT_METRICS)
+            result_data = json.loads(result)
+            assert result_data["data"][0]["name"] == "reach"
+
+    @pytest.mark.asyncio
+    async def test_defaults_for_feed_media(self):
+        """FEED media gets feed-only defaults (no Reels-specific metrics)."""
+        type_response = {"media_product_type": "FEED"}
+        insights_response = {"data": []}
+        with patch(
+            "meta_ads_mcp.core.instagram_insights.make_api_request",
+            new_callable=AsyncMock,
+            side_effect=[type_response, insights_response],
+        ) as mock_api:
+            await get_media_insights(media_id="456", access_token="test_token")
+            params = mock_api.call_args_list[1][0][2]
+            assert params["metric"] == ",".join(FEED_DEFAULT_METRICS)
+            assert "reels_skip_rate" not in params["metric"]
+
+    @pytest.mark.asyncio
+    async def test_defaults_for_story_media(self):
+        """STORY media gets story-specific defaults."""
+        type_response = {"media_product_type": "STORY"}
+        insights_response = {"data": []}
+        with patch(
+            "meta_ads_mcp.core.instagram_insights.make_api_request",
+            new_callable=AsyncMock,
+            side_effect=[type_response, insights_response],
+        ) as mock_api:
+            await get_media_insights(media_id="789", access_token="test_token")
+            params = mock_api.call_args_list[1][0][2]
+            assert params["metric"] == ",".join(STORY_DEFAULT_METRICS)
+
+    @pytest.mark.asyncio
+    async def test_defaults_for_reels_exclude_unsupported_metrics(self):
+        """REELS defaults should not include follows/profile_visits (400 on v25.0)."""
+        type_response = {"media_product_type": "REELS"}
+        insights_response = {"data": []}
+        with patch(
+            "meta_ads_mcp.core.instagram_insights.make_api_request",
+            new_callable=AsyncMock,
+            side_effect=[type_response, insights_response],
+        ) as mock_api:
+            await get_media_insights(media_id="999", access_token="test_token")
+            params = mock_api.call_args_list[1][0][2]
+            metrics = params["metric"].split(",")
+            assert "follows" not in metrics
+            assert "profile_visits" not in metrics
+
+    @pytest.mark.asyncio
+    async def test_custom_metrics_skip_detection(self):
+        """When explicit metrics are passed, no media-type lookup is made."""
+        insights_response = {"data": []}
+        with patch(
+            "meta_ads_mcp.core.instagram_insights.make_api_request",
+            new_callable=AsyncMock,
+            return_value=insights_response,
+        ) as mock_api:
+            await get_media_insights(
+                media_id="123",
+                access_token="test_token",
+                metrics=["reach", "impressions"],
+            )
+            # Only one call (insights), no type-detection call
+            mock_api.assert_called_once()
+            params = mock_api.call_args[0][2]
+            assert params["metric"] == "reach,impressions"
+
+    @pytest.mark.asyncio
+    async def test_default_metrics_do_not_include_plays(self):
+        """plays was removed in v22.0 — none of the default lists should contain it."""
+        for metric_list in [FEED_DEFAULT_METRICS, REELS_DEFAULT_METRICS, STORY_DEFAULT_METRICS]:
+            assert "plays" not in metric_list
+            assert "ig_reels_aggregated_all_plays_count" not in metric_list
+
+    @pytest.mark.asyncio
+    async def test_no_media_id(self):
+        result = await get_media_insights(media_id="", access_token="test_token")
+        result_data = json.loads(result)
+        assert "data" in result_data
+        nested = json.loads(result_data["data"])
+        assert "error" in nested
+
+
+class TestGetIgAccountInsights:
+    @pytest.mark.asyncio
+    async def test_success_with_since_until(self):
+        mock_response = {"data": []}
+        with patch(
+            "meta_ads_mcp.core.instagram_insights.make_api_request",
+            new_callable=AsyncMock,
+            return_value=mock_response,
+        ) as mock_api:
+            result = await get_ig_account_insights(
+                ig_user_id="17841400000",
+                metrics=["follower_count"],
+                period="day",
+                since="2026-03-01",
+                until="2026-03-11",
+                access_token="test_token",
+            )
+            call_args = mock_api.call_args
+            params = call_args[0][2]
+            assert params["since"] == "2026-03-01"
+            assert params["until"] == "2026-03-11"
+            result_data = json.loads(result)
+            assert "data" in result_data
+
+    @pytest.mark.asyncio
+    async def test_invalid_period(self):
+        result = await get_ig_account_insights(
+            ig_user_id="17841400000",
+            metrics=["follower_count"],
+            period="quarterly",
+            access_token="test_token",
+        )
+        result_data = json.loads(result)
+        assert "data" in result_data
+        nested = json.loads(result_data["data"])
+        assert "error" in nested
+
+    @pytest.mark.asyncio
+    async def test_no_metrics(self):
+        result = await get_ig_account_insights(
+            ig_user_id="17841400000",
+            metrics=[],
+            period="day",
+            access_token="test_token",
+        )
+        result_data = json.loads(result)
+        assert "data" in result_data
+        nested = json.loads(result_data["data"])
+        assert "error" in nested
+
+    @pytest.mark.asyncio
+    async def test_metric_type_param_passed(self):
+        mock_response = {"data": []}
+        with patch(
+            "meta_ads_mcp.core.instagram_insights.make_api_request",
+            new_callable=AsyncMock,
+            return_value=mock_response,
+        ) as mock_api:
+            await get_ig_account_insights(
+                ig_user_id="17841400000",
+                metrics=["impressions"],
+                period="day",
+                metric_type="total_value",
+                access_token="test_token",
+            )
+            call_args = mock_api.call_args
+            params = call_args[0][2]
+            assert params["metric_type"] == "total_value"
+
+    @pytest.mark.asyncio
+    async def test_metric_type_not_set_by_default(self):
+        mock_response = {"data": []}
+        with patch(
+            "meta_ads_mcp.core.instagram_insights.make_api_request",
+            new_callable=AsyncMock,
+            return_value=mock_response,
+        ) as mock_api:
+            await get_ig_account_insights(
+                ig_user_id="17841400000",
+                metrics=["reach"],
+                period="day",
+                access_token="test_token",
+            )
+            call_args = mock_api.call_args
+            params = call_args[0][2]
+            assert "metric_type" not in params
+
+    @pytest.mark.asyncio
+    async def test_follower_count_rejects_non_day_period(self):
+        result = await get_ig_account_insights(
+            ig_user_id="17841400000",
+            metrics=["follower_count"],
+            period="week",
+            access_token="test_token",
+        )
+        result_data = json.loads(result)
+        assert "data" in result_data
+        nested = json.loads(result_data["data"])
+        assert "error" in nested
+        assert "follower_count" in nested["error"]
+
+    @pytest.mark.asyncio
+    async def test_follower_count_with_day_period_succeeds(self):
+        mock_response = {"data": [{"name": "follower_count", "values": [{"value": 4800}]}]}
+        with patch(
+            "meta_ads_mcp.core.instagram_insights.make_api_request",
+            new_callable=AsyncMock,
+            return_value=mock_response,
+        ):
+            result = await get_ig_account_insights(
+                ig_user_id="17841400000",
+                metrics=["follower_count"],
+                period="day",
+                access_token="test_token",
+            )
+            result_data = json.loads(result)
+            assert "data" in result_data
+
+
+class TestGetStoryInsights:
+    @pytest.mark.asyncio
+    async def test_success_with_defaults(self):
+        mock_response = {"data": [{"name": "reach", "values": [{"value": 200}]}]}
+        with patch(
+            "meta_ads_mcp.core.instagram_insights.make_api_request",
+            new_callable=AsyncMock,
+            return_value=mock_response,
+        ) as mock_api:
+            result = await get_story_insights(story_id="story_123", access_token="test_token")
+            call_args = mock_api.call_args
+            params = call_args[0][2]
+            default_metrics = ["reach", "replies", "taps_forward", "taps_back", "exits",
+                               "follows", "profile_visits"]
+            assert params["metric"] == ",".join(default_metrics)
+            assert "impressions" not in params["metric"]
+            result_data = json.loads(result)
+            assert result_data["data"][0]["name"] == "reach"
+            assert result_data["data"][0]["values"][0]["value"] == 200
+
+
+class TestPublishMedia:
+    @pytest.mark.asyncio
+    async def test_two_step_success(self):
+        with patch(
+            "meta_ads_mcp.core.instagram_insights.make_api_request",
+            new_callable=AsyncMock,
+        ) as mock_api:
+            mock_api.side_effect = [{"id": "container_123"}, {"id": "published_456"}]
+            result = await publish_media(
+                ig_user_id="17841400000",
+                media_url="https://example.com/video.mp4",
+                media_type="REELS",
+                access_token="test_token",
+            )
+            assert mock_api.call_count == 2
+            result_data = json.loads(result)
+            assert result_data["id"] == "published_456"
+
+    @pytest.mark.asyncio
+    async def test_invalid_media_url(self):
+        result = await publish_media(
+            ig_user_id="17841400000",
+            media_url="ftp://not-valid",
+            media_type="REELS",
+            access_token="test_token",
+        )
+        result_data = json.loads(result)
+        assert "data" in result_data
+        nested = json.loads(result_data["data"])
+        assert "error" in nested
+
+    @pytest.mark.asyncio
+    async def test_invalid_media_type(self):
+        result = await publish_media(
+            ig_user_id="17841400000",
+            media_url="https://example.com/image.jpg",
+            media_type="CAROUSEL",
+            access_token="test_token",
+        )
+        result_data = json.loads(result)
+        assert "data" in result_data
+        nested = json.loads(result_data["data"])
+        assert "error" in nested
+
+    @pytest.mark.asyncio
+    async def test_step1_failure(self):
+        with patch(
+            "meta_ads_mcp.core.instagram_insights.make_api_request",
+            new_callable=AsyncMock,
+            return_value={"error": {"message": "Upload failed"}},
+        ) as mock_api:
+            result = await publish_media(
+                ig_user_id="17841400000",
+                media_url="https://example.com/video.mp4",
+                media_type="REELS",
+                access_token="test_token",
+            )
+            # Only one call should be made — step 2 must not run
+            assert mock_api.call_count == 1
+            result_data = json.loads(result)
+            assert "data" in result_data
+            nested = json.loads(result_data["data"])
+            assert "error" in nested
+            # creation_id must NOT be in the response (step 1 failed cleanly)
+            assert "creation_id" not in nested
+
+    @pytest.mark.asyncio
+    async def test_step2_failure(self):
+        with patch(
+            "meta_ads_mcp.core.instagram_insights.make_api_request",
+            new_callable=AsyncMock,
+        ) as mock_api:
+            mock_api.side_effect = [
+                {"id": "container_123"},
+                {"error": {"message": "Publish failed"}},
+            ]
+            result = await publish_media(
+                ig_user_id="17841400000",
+                media_url="https://example.com/video.mp4",
+                media_type="REELS",
+                access_token="test_token",
+            )
+            result_data = json.loads(result)
+            assert "error" in result_data
+            # creation_id must be present so the caller can debug
+            assert "creation_id" in result_data
+            assert result_data["creation_id"] == "container_123"
+
+
+class TestGetIgProfile:
+    MOCK_PROFILE = {
+        "followers_count": 7300,
+        "follows_count": 150,
+        "media_count": 42,
+        "name": "CultMeUp",
+        "biography": "Greece's first workshop marketplace.",
+        "website": "https://cultmeup.gr",
+        "profile_picture_url": "https://cdn.example.com/pic.jpg",
+        "ig_id": "17841473732194608",
+        "username": "cultmeup",
+        "id": "17841473732194608",
+    }
+
+    @pytest.mark.asyncio
+    async def test_success_default_fields(self):
+        """All 9 default fields are sent and the response is returned correctly."""
+        with patch(
+            "meta_ads_mcp.core.instagram_insights.make_api_request",
+            new_callable=AsyncMock,
+            return_value=self.MOCK_PROFILE,
+        ) as mock_api:
+            result = await get_ig_profile(ig_user_id="17841473732194608", access_token="test_token")
+            mock_api.assert_called_once_with(
+                "17841473732194608",
+                "test_token",
+                {"fields": ",".join(IG_PROFILE_DEFAULT_FIELDS)},
+            )
+            result_data = json.loads(result)
+            assert result_data["followers_count"] == 7300
+            assert result_data["username"] == "cultmeup"
+
+    @pytest.mark.asyncio
+    async def test_custom_fields_override(self):
+        """Only caller-specified fields are sent to the API."""
+        custom_fields = ["followers_count", "username"]
+        mock_response = {"followers_count": 7300, "username": "cultmeup", "id": "17841473732194608"}
+        with patch(
+            "meta_ads_mcp.core.instagram_insights.make_api_request",
+            new_callable=AsyncMock,
+            return_value=mock_response,
+        ) as mock_api:
+            result = await get_ig_profile(
+                ig_user_id="17841473732194608",
+                access_token="test_token",
+                fields=custom_fields,
+            )
+            call_args = mock_api.call_args
+            params = call_args[0][2]
+            assert params["fields"] == "followers_count,username"
+            result_data = json.loads(result)
+            assert result_data["followers_count"] == 7300
+
+    @pytest.mark.asyncio
+    async def test_no_ig_user_id(self):
+        """Empty ig_user_id returns an error (double-parse pattern)."""
+        result = await get_ig_profile(ig_user_id="", access_token="test_token")
+        result_data = json.loads(result)
+        assert "data" in result_data
+        nested = json.loads(result_data["data"])
+        assert "error" in nested
+
+    @pytest.mark.asyncio
+    async def test_default_fields_constant(self):
+        """IG_PROFILE_DEFAULT_FIELDS has exactly 9 items with the expected names."""
+        assert len(IG_PROFILE_DEFAULT_FIELDS) == 9
+        expected = {
+            "followers_count", "follows_count", "media_count", "name",
+            "biography", "website", "profile_picture_url", "ig_id", "username",
+        }
+        assert set(IG_PROFILE_DEFAULT_FIELDS) == expected
+
+    @pytest.mark.asyncio
+    async def test_endpoint_is_bare_node(self):
+        """The endpoint passed to make_api_request is the bare ig_user_id, not ig_user_id/insights."""
+        with patch(
+            "meta_ads_mcp.core.instagram_insights.make_api_request",
+            new_callable=AsyncMock,
+            return_value=self.MOCK_PROFILE,
+        ) as mock_api:
+            await get_ig_profile(ig_user_id="17841473732194608", access_token="test_token")
+            endpoint_arg = mock_api.call_args[0][0]
+            assert endpoint_arg == "17841473732194608"
+            assert "insights" not in endpoint_arg
+
+    @pytest.mark.asyncio
+    async def test_slash_in_ig_user_id(self):
+        """ig_user_id containing a slash is rejected with an error."""
+        result = await get_ig_profile(ig_user_id="12345/insights", access_token="test_token")
+        result_data = json.loads(result)
+        assert "data" in result_data
+        nested = json.loads(result_data["data"])
+        assert "error" in nested
+
+    @pytest.mark.asyncio
+    async def test_empty_fields_list(self):
+        """fields=[] is rejected with an error."""
+        result = await get_ig_profile(ig_user_id="17841473732194608", access_token="test_token", fields=[])
+        result_data = json.loads(result)
+        assert "data" in result_data
+        nested = json.loads(result_data["data"])
+        assert "error" in nested
+
+    @pytest.mark.asyncio
+    async def test_invalid_field_name(self):
+        """A field containing special chars (e.g. semicolon) is rejected with an error."""
+        result = await get_ig_profile(
+            ig_user_id="17841473732194608",
+            access_token="test_token",
+            fields=["followers_count", "bad;field"],
+        )
+        result_data = json.loads(result)
+        assert "data" in result_data
+        nested = json.loads(result_data["data"])
+        assert "error" in nested
+
+    @pytest.mark.asyncio
+    async def test_api_error_propagation(self):
+        """Graph API error dict is returned when the upstream call fails.
+
+        The meta_api_tool wrapper intercepts error responses and double-wraps them
+        in {"data": "<json-string>"}. We unpack that to confirm the error propagates.
+        """
+        error_response = {"error": {"message": "Invalid OAuth access token.", "code": 190}}
+        with patch(
+            "meta_ads_mcp.core.instagram_insights.make_api_request",
+            new_callable=AsyncMock,
+            return_value=error_response,
+        ):
+            result = await get_ig_profile(ig_user_id="17841473732194608", access_token="bad_token")
+            result_data = json.loads(result)
+            # meta_api_tool wraps the error in {"data": "<json>"}
+            assert "data" in result_data
+            nested = json.loads(result_data["data"])
+            assert "error" in nested
+            assert nested["error"]["code"] == 190
